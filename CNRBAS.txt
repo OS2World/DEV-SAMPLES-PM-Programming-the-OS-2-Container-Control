@@ -1,0 +1,508 @@
+Programming the OS/2 Container Control: The Basics
+==================================================
+
+by Peter Haggar and Peter Brightbill
+OS/2 Developer Winter 1993, Vol. 5 No. 1, Pages 96-101
+
+The container control is shipped in OS/2 2.0 as a 32-bit control and in
+the IBM CUA controls library (CCL/2) as a 16-bit control.  The container
+is functionally equivalent in the two products, and the information in
+this article can be used by application developers working with either
+product.  This article assumes the reader has limited knowledge of the
+container control, and at least has read the information in the OS/2 2.0
+Programming Guide Volume II, Chapter 18.  More information on the
+container control will follow in the next issue.
+
+The container control is large and complex.  While this article is not
+intended to cover every aspect of the container, it provides information
+that can help developers write an application using it.
+
+
+Structure of a Container Application
+====================================
+
+The container control was designed to be extremely flexible to satisfy
+the needs of most applications.  There are several basic concerns when
+designing an application.  First, applications need not expose all the
+container's functions, such as drag and drop or the direct edit feature.
+To prohibit the editing of text in the container, set the CSS_READONLY
+style at creation.  The container provides many views to display its
+data; the application can choose to support some or all of those views.
+
+Developers must also decide how to allocate and insert container
+records.  For the purpose of optimization, records should be allocated
+and inserted in groups rather than individually.  Grouping records
+reduces the time needed to populate the container.  You can allocate and
+insert n records with two WinSendMsg calls, as opposed to 2n WinSendMsg
+calls if you were to allocate and insert each separately.  A good rule
+is to avoid any excessive WinSendMsg calls.  This is especially
+important with 16-bit PMWIN in OS/2.  In this setup, the 32-bit
+application calls 16-bit code in PMWIN, which in turn calls the 32-bit
+container control.  On the return, the 32-bit container code returns to
+the 16-bit PMWIN code and then back to the 32-bit application code.
+Converting between 16- and 32-bit memory models, or "thunking", can be
+costly in terms of clock cycles.
+
+
+Structures
+==========
+
+RECORDCORE and MINIRECORDCORE
+=============================
+
+The container uses one of two structures to store record data,
+RECORDCORE and MINIRECORDCORE.  The structure used depends on the style
+set by the application when a container window is created.  (The
+CCS_MINIRECORDCORE style indicates that the container is to use
+MINIRECORDCORE) MINIRECORDCORE, which minimizes application memory use,
+using 28 bytes, or half the size of the RECORDCORE structure's 56 bytes.
+But the ability to use less memory is rarely free; this situation is no
+exception.  Certain functions are inoperable, or at least more
+complicated, with the MINIRECORDCORE structure.
+
+With MINIRECORDCORE, the tree name view cannot be used properly.  The
+bitmaps and icons displayed in this view are stored in the TREEITEMDESC
+structure, which is pointed to by RECORDCORE.  If you use the tree name
+view with MINIRECORDCORE, the same icon designates the expanded and
+collapsed icon.  This can be confusing to the user.  In addition, the
+MINIRECORDCORE is restricted to one text string pointer that displays
+text for each record in text, name, icon, and tree view.  RECORDCORE,
+however, provides a separate text string pointer for each view.  In
+MINIRECORDCORE, you cannot use bitmaps, as only one icon handle is
+provided (compared to two icon and two bitmap handles in RECORDCORE).
+
+Unlike RECORDCORE, MINIRECORDCORE does not provide a mini icon handle.
+To use mini icons with MINRECORDCORE, provide a mini icon handle for the
+hptrIcon field of the MINIRECORDCORE structure.  Set the slBitmapOrIcon
+field of the CNRINFO structure to specify icon size.  This is necessary
+because the container is expecting a system default icon size.  The
+container uses the system value SV_CXICON and SV_CYICON to determine the
+size of a default icon.  If the given icon is a different size than that
+specified in the slBitmapOrIcon field, it will be stretched or
+compressed as needed.  This technique is shown in Figure 1.
+
+========================================================================
+
+ /* Using the MINIRECORDCORE to display mini icons in the container. */
+ PMINIRECORDCORE  pRecord;
+ CNRINFO          CnrInfo;
+
+ /* Specify a size for the mini icon.  The system value for the size of
+  * a menu is commonly used. */
+ CnrInfo.slBitmapOrIcon.cx = WinQuerySysValue (HWND_DESKTOP, SV_CYMENU);
+ CnrInfo.slBitmapOrIcon.cy = CnrInfo.slBitmapOrIcon.cx;
+
+ /* Tell the container to display all icons this size. */
+ WinSendMsg (hwndCnr, CM_SETCNRINFO,
+             MPFROMP(&CnrInfo), MPFROMLONG(CMA_SLBITMAPORICON));
+
+ /* Assign the mini icon to the MINIRECORDCORE.  Then insert the
+  * record into the container. */
+ pRecord->hptrIcon = WinLoadPointer (HWND_DESKTOP, NULL, ID_MINIICON);
+
+ WinSendMsg (hwndCnr, CM_INSERTRECORD,
+             MPFROMP(pRecord), MPFROMP(&RecordInsert));
+
+========================================================================
+Figure 1. Mini Icons with MINIRECORDCORE
+
+After determining which of the two container record storage structures
+to use, you may want to store more information per record than is
+provided by either the RECORDCORE or MINIRECORDCORE.  Determine what
+information you wish to store for each record, then allocate the extra
+memory on the CM_ALLOCRECORD message.  Applications that use the details
+view usually add more memory to each record to store information to be
+displayed in the columns.  If an object-oriented environment in which
+the record represents an object, the instance data for the object can be
+added to the record.  This is the technique used by the OS/2 2.0
+Workplace Shell, which uses the container control for its folder object.
+
+If any additional data is to be added to each record, the application
+needs to typedef a structure as shown in Figure 2.
+
+========================================================================
+
+ typedef struct _RECORDOBJECT
+ {
+   MINIRECORDCORE  MiniRec;  <------- Be sure the MINIRECORDCORE or
+   ULONG           ulCount;  <-------             RECORDCORE is first.
+   BOOL            bInit;           |
+   SHORT           sID;             |-- Additional data.
+   PSZ             pszDept;         |
+   CDATE           Date;     <-------
+ } RECORDOBJECT;
+ typedef RECORDOBJECT *PRECORDOBJECT;
+
+========================================================================
+Figure 2. Application-defined container item
+
+MINIRECORDCORE or RECORDCORE, must be the first field of the structure.
+This is important, as the container always returns pointers to
+RECORDCORE or MINIRECORDCORE.  You can then typecast the pointer to, in
+this case, PRECORDOBJECT, and be able to address the container record
+and all additional data.  In addition, when an application has to pass a
+pointer to a record for a particular message, it must point to either
+MINIRECORDCORE or RECORDCORE, as shown in Figure 3.
+
+=======================================================================
+
+ PRECORDOBJECT  pRecObj;
+ PRECORDOBJECT  pRecParent;
+ RECORDINSERT   RecordInsert;
+
+ /* Allocate a MINIRECORDCORE plus the additional bytes needed from the
+  * RECORDOBJECT structure. */
+ pRecObj = (PRECORDOBJECT)WinSendMsg(hwndCnr, CM_ALLOCRECORD,
+                                     MPFROMLONG(sizeof(RECORDOBJECT) -
+                                                sizeof(MINIRECORDCORE)),
+                                     MPFROMLONG(nRecords));
+
+ /* Assign the necessary data to the record. */
+ pRecObj->MiniRec.cb = sizeof(MINIRECORDCORE);
+ pRecObj->MiniRec.hptrIcon = hptrCarIcon;
+ pRecObj->ulCount = 1;
+ pRecObj->bInit = TRUE;
+ pRecObj->sID   = 100;
+ strcpy (pRecObj->pszDept, pszDeptTitle);
+ .
+ .
+ RecordInsert.pRecordParent = (PRECORDCORE)pRecParent;
+ .
+ .
+ /* Insert the record */
+ WinSendMsg (hwndCnr, CM_INSERTRECORD,
+             MPFROMP(&pRecObj), MPFROMP(&RecordInsert));
+
+=======================================================================
+Figure 3. Record allocation and insertion
+
+
+CNRINFO and CM_SETCNRINFO
+=========================
+
+An internal CNRINFO structure describes most of the relevant information
+used by the container.  To change the information in this structure, use
+the CM_SETCNRINFO message.  The application should allocate its copy of
+the CNRINFO structure and set all fields that are to be changed.  The
+application should send the CM_SETCNRINFO message, setting the
+appropriate flags to indicate which fields are to be updated.  The
+container will then copy the information to the internal CNRINFO
+structure it manages.  CM_QUERYCNRINFO can be used to retrieve a CNRINFO
+structure in use by the container.  This message is necessary if your
+application needed information about the container stored in the
+structure.  For example, to determine the container's current view, use
+CM_QUERYCNRINFO and check the attributes in the flWindowAttr field.
+
+
+The Details on Details View
+===========================
+
+Details view is one of the most popular views, and is the only view that
+uses the FIELDINFO structure.  It can be one of the more complicated
+views to program to.  The details view is a table of rows and columns.
+Each row is represented by a RECORDCORE or MINIRECORDCORE structure, and
+each column by a FIELDINFO structure. Many container attributes apply to
+the entire details view, while others can be set specifically for each
+column.
+
+Fields from the CNRINFO structure that apply to the entire details view
+are xVertSplitbar, pFieldInfoLast, and pFieldInfoObject.  Respectively,
+they set the x position of the splitbar, the last column in the left
+split window, and the column to receive IN-USE (CRA_INUSE) emphasis.
+Each is optional, depending on the setup of the details view.  If your
+application does not display a splitbar, the xVertSplitbar and
+pFieldInfoLast fields are not used. The pFieldInfoObject field, if not
+set specifically, will default to the first column in the left window,
+or the first column in an unsplit details view.  All these fields can be
+specified individually or as a group with the CM_SETCNRINFO message.
+Figure 4 shows how to set these fields with a single CM_SETCNRINFO
+message.
+
+=======================================================================
+
+ /* Fill in the fields of the CNRINFO structure that we want
+  * to update */
+ CnrInfo.xVertSplitbar    = 100;
+ CnrInfo.pFieldInfoLast   = pFieldInfoLastLeft;
+ CnrInfo.pFieldInfoObject = pFieldInfo;
+
+ /* Using the proper flags, tell the container to use this
+  * new information */
+ WinSendMsg (hwndCnr, CM_SETCNRINFO, MPFROMP(&CnrInfo),
+             MPFROMLONG(CMA_XVERTSPLITBAR | CMA_PFIELDINFOLAST |
+                        CMA_PFIELDINFOOBJECT));
+
+=======================================================================
+Figure 4. Updating CNRINFO
+
+Other attributes, the CFA_* attributes, apply only to a specific column
+in the details view.  Some apply only to the titles and others to the
+data area of the column.  Memory for the FIELDINFO structure is
+allocated with the CM_ALLOCDETAILFIELDINFO message.  The flTitle and
+flData fields of FIELDINFO are used to set specific attributes for each
+column before they are inserted into the container with
+CM_INSERTDETAILFIELDINFO.  Any attribute can be changed after the
+FIELDINFOs are inserted by sending the CM_INVALIDATEDETAILFIELDINFO message.
+
+To display column titles in details view, set the CA_DETAILSVIEWTITLES
+container attribute in the flWindowAttr field of the CNRINFO structure,
+then send the CM_SETCNRINFO message specifying CMA_FLWINDOWATTR.
+For example:
+
+    CnrInfo.flWindowAttr = CV_DETAIL |
+                             CA_DETAILSVIEWTITLES |
+                             CA_DRAWICON;
+    WinSendMsg (hwndCnr, CM_SETCNRINFO,
+                   MPFROMP(&CnrInfo),
+                   MPFROMLONG(CMA_FLWINDOWATTR));
+
+When column titles are to be used in details view, specify the type of
+data to appear in each column title.  This is done through the flTitle
+field of the FIELDINFO structure.  Only two types of data, first, icons
+or bitmaps and second, text strings, are allowed in the details view
+column titles.  When CFA_BITMAPORICON attribute is specified, the
+container assumes that the pTitleData field points to an icon or bitmap
+handle, depending on whether the CA_DRAWICON or CA_DRAWBITMAP attribute
+is specified.  If the CFA_BITMAPORICON attribute is not specified, the
+container will assume that the pTitleData field points to a text string.
+
+Column data can be icons, bitmaps, text strings, dates, times, or
+numbers.  These are specified by setting the flData field of the
+FIELDINFO structure to CFA_BITMAPORICON, CFA_STRING, CFA_DATE, CFA_TIME,
+or CFA_ULONG, respectively.  When one of these attributes is specified,
+the container assumes the same type of data is contained at the location
+specified by the FIELDINFO's offstruct field, as in Figure 5.
+
+=======================================================================
+
+ PFIELDINFO  pFieldInfo;
+
+  if (pFieldInfo = WinSendMsg (hwndCnr, CM_ALLOCDETAILFIELDINFO,
+                               MPFROMSHORT(numColumns), NULL))
+  {
+    /* First column title will be a string, and the data will be
+     * an icon */
+    strcpy (pFieldInfo->pTitleData, pszFirstColTitle);
+    pFieldInfo->flData = CFA_BITMAPORICON;
+    pFieldInfo->offstruct = FIELDOFFSET(MINIRECORDCORE, hptrIcon);
+    .
+    .
+    pFieldInfo = pFieldInfo->pNextFieldInfo;
+
+    /* Second column title will be a string, and the data will be
+     * the name */
+    strcpy (pFieldInfo->pTitleData, pszSecondColTitle);
+    pFieldInfo->flData = CFA_STRING;
+    pFieldInfo->offstruct = FIELDOFFSET(MINIRECORDCORE, pszIcon);
+    .
+    .
+    pFieldInfo = pFieldInfo->pNextFieldInfo;
+
+    /* Third column title will be an icon of a calendar, and the data
+     * will be the date */
+    pFieldInfo->flTitle = CFA_BITMAPORICON;
+    pFieldInfo->pTitleData = hptrCalendar;
+    pFieldInfo->flData = CFA_DATE;
+    pFieldInfo->offstruct = FIELDOFFSET(RECORDOBJECT, Date);
+    .
+    .
+  }
+
+=======================================================================
+Figure 5. Setting up FIELDINFO
+
+Other options specific to the flData field are:
+
+CFA_HORZSEPARATOR - Draws a horizontal line between the column title
+                    and the column data.
+CFA_SEPARATOR     - Draws a vertical line after a column; the line
+                    extends through the title area.
+CFA_OWNER         - Allows the application to ownerdraw a column.
+CFA_INVISIBLE     - Makes a column invisible.
+CFA_FIREADONLY    - Makes a column's data, but not its title, read-only.
+                    To make a column title read-only, specify
+                    CFA_FITITLEREADONLY in the flTitle field.
+
+Data in a column can be aligned in any of nine different ways using the
+CFA_TOP, CFA_BOTTOM, and CFA_VCENTER for vertical positioning and
+CFA_LEFT, CFA_RIGHT, and CFA_CENTER for horizontal positioning.  These
+can be set differently for title and data in one column.
+
+The most important field in the FIELDINFO structure is offstruct, which
+tells the column at what offset from the beginning of RECORDCORE or
+MINIRECORDCORE to find its data.  All data displayed in details view is
+contained in or after RECORDCORE or MINIRECORDCORE. If any data is to be
+contained after, allocate record memory shown in Figure 3.  Figure 5
+shows how FIELDINFO structures could be set up to display different
+columns of data with the RECORDOBJECT structure defined earlier.  Be
+sure that if any column contains string data, the corresponding
+FIELDINFO's offstruct parameter must refer to a PSZ (pointer to a
+character string), not a character string itself.
+
+
+Tree View
+=========
+
+The tree view is used when the objects of a container are best
+represented in a hierarchy.  The drives folder of OS/2 2.0, where a
+drives directory structure is displayed, is an example of where a tree
+view is useful.  In all, the container offers three different types of
+tree views: tree-text, tree-icon, and tree-name.
+
+The layout of the tree view is flexible and can be tailored to an
+application.  The lines that connect child records to their parents can
+be specified as to their thickness and indentation depth.  These values
+are set with the cxTreeLine and cxTreeIndent fields of the CNRINFO
+structure, respectively.  This example shows how to display longer and
+thicker lines than those provided by default:
+
+    CnrInfo.cxTreeLine =   5;
+    CnrInfo.cxTreeIndent = 50;
+    WinSendMsg (hwndCnr, CM_SETCNRINFO, &CnrInfo,
+                CMA_CXTREELINE | CMA_CXTREEINDENT);
+
+The tree-icon and tree-text views use an icon to display the state
+(expanded or collapsed) of a parent record.  The container provides
+default expanded and collapsed icons, which can be replaced with the
+hptrExpanded and hptrCollapsed fields of the CNRINFO structure.  As with
+all icons used by the container, these can be sized.  The following code
+sample makes the expanded and collapsed icons larger than the default size.
+
+    CnrInfo.slTreeBitmapOrIcon.cx = 100;
+    CnrInfo.slTreeBitmapOrIcon.cy = 100;
+    WinSendMsg (hwndCnr, CM_SETCNRINFO, &CnrInfo,
+                CMA_SLTREEBITMAPORICON);
+
+The tree-name view can be used to preserve screen real estate.  In this
+view, the record's expanded and collapsed icon are two separate icons.
+The container displays the appropriate icon based on the state of a
+parent record.  In this case, the application should utilize the
+TREEITEMDESC structure.  Because the MINIRECORDCORE structure does not
+contain a PTREEITEMDESC field, the TREEITEMDESC structure and tree-name
+view should be used only with the RECORDCORE structure.  For all
+records, the appropriate icons should be loaded in the TREEITEMDESC
+structures hptrExpanded and hptrCollapsed fields.  This code sample
+loads icons to be displayed in tree-name view for a parent record.
+
+    pRecord->pTreeItemDesc = malloc(
+               sizeof(TREEITEMDESC) );
+    pRecord->pTreeItemDesc->hptrExpanded  =
+               WinLoadPointer(...);
+    pRecord->pTreeItemDesc->hptrCollapsed =
+               WinLoadPointer(...);
+
+To insert records in tree-view, the RECORDINSERT structure needs to be
+set up properly.  To insert records at the root level (items with no
+parents), the pRecordParent field should always be set to NULL.  There
+are two options when inserting child records.  If inserting the first or
+last (CMA_FIRST or CMA_END) child, the pRecordParent field must point to
+the appropriate parent record.  When inserting child records that are
+not first or last, the pRecordOrder field must point to the previous
+child record and the pRecordOrder should be set to NULL.
+
+Although the container's tree view is flexible, there are some
+limitations.  Regardless of the selection model (extended, multiple, or
+single) chosen, the tree view is always single selection.  Only the
+root-level items may be shown in the other container views.  To show
+child records in other views, you could use record sharing to share
+these records with another container.  While we have mentioned icons in
+this section, the container offers the same flexibility for bitmaps when
+the CA_DRAWBITMAP attribute is set.
+
+
+Query Messages and Coordinate Systems
+=====================================
+
+There are a number of query messages provided by the container that
+allow you to query useful information.  CM_QUERYVIEWPORTRECT,
+CM_QUERYRECORDRECT, and CM_QUERYRECORDFROMRECT are query messages that
+deal with coordinate systems.
+
+CM_QUERYVIEWPORTRECT deals with the workspace coordinates and container
+window coordinates while the others work only in window coordinates.
+The workspace is defined by the extreme positions of the visible records
+and the workspace coordinate system is stationary.  The container window
+viewport (the viewable section of the container's workspace) contains a
+subset of the entire workspace that is moved as the container is
+scrolled.  The viewport does not include scroll bars and titles that may
+be present in the container window.  CM_QUERYVIEWPORTRECT can retrieve
+the viewport's size and position relative to the workspace
+(CMA_WORKSPACE) or relative to the container window (CMA_WINDOW).  If
+only the size of the viewport is desired, either coordinate system can
+be used.
+
+CM_QUERYRECORDRECT is used to query a record's position relative to the
+container window's origin.  This value is dependent on the viewport's
+current location and changes when the container is scrolled.  The
+position of the record in workspace coordinates can be queried with
+CM_QUERYRECORDINFO.  The record's workspace position does not change
+when the container is scrolled.
+
+It may be useful to determine which records intersect a given rectangle
+whose coordinates are relative to the container window origin, for
+example, if you wanted to know which record was under the mouse.  With
+the mouse coordinates expressed as a rectangle, use
+CM_QUERYRECORDFROMRECT to search for the record under the mouse, if one
+exists.  This code sample can be used in any view to retrieve a record
+under the mouse:
+
+    QueryRecordFromRect.cb =
+         sizeof(QUERYRECFROMRECT);
+    QueryRecordFromRect.rect.xLeft   = MousePt.x;
+    QueryRecordFromRect.rect.xRight  = MousePt.x;
+    QueryRecordFromRect.rect.yTop    = MousePt.y;
+    QueryRecordFromRect.rect.yBottom = MousePt.y;
+    QueryRecordFromRect.rect.fsSearch = CMA_PARTIAL |
+         CMA_ITEMORDER;
+    pRecord = WinSendMsg (hwndCnr,
+         CM_QUERYRECORDFROMRECT,
+         MPFROMP(CMA_FIRST),
+         &QueryRecordFromRect);
+
+You may want to use the CMA_ZORDER flag in the fsSearch field if the
+container is in a nonautopositioned icon view (one in which the
+CCS_AUTOPOSITION is not set upon container creation).  In this case,
+records may be positioned on top of one another.
+
+
+Closing a Container Application
+===============================
+
+When your application is closed, it is responsible for freeing all
+memory, such as memory allocated for text strings used in records and
+columns.  All icons and bitmaps loaded should be released.
+
+
+References
+==========
+
+Haggar, Peter, Tai Woo Nam, and Ruth Anne Taylor.  "Container Control:
+Implementing the Workplace Model," IBM Personal Systems Developer
+(Winter 1992): 48-54.
+
+OS/2 2.0 Programmers Guide Volume II, (IBM Doc. S10G-6494)
+
+OS/2 2.0 Presentation Manager Programming Reference Volume III, (IBM Doc. S10G-6272)
+
+SAA CUA Guide to User Interface Design, (IBM Doc. SC34-4289)
+
+SAA CUA Advanced Interface Design Reference, (IBM Doc. SC34-4290)
+
+
+Peter Brightbill, IBM Programming Systems Laboratory, 11000 Regency
+Parkway, Cary, NC 27512.  Brightbill is a senior associate programmer in
+OS/2 PM extensions development.  He joined IBM in 1989 and has been
+working in OS/2 PM development since that time.  Brightbill was a member
+of the OS/2 container control development team and is currently working
+on additional OS/2 controls.  He received a B.S. in mathematics and
+computer science from Millersville University, Pa.
+
+Peter Haggar, IBM Programming Systems Laboratory, 11000 Regency Parkway,
+Cary, NC 27512.  Haggar is a staff programmer in OS/2 PM extensions
+development.  He joined IBM in 1987 and has been working in OS/2 PM
+development since 1989.  Haggar was a member of the OS/2 container
+control development team and recently completed a five-month assignment
+with the OS/2 2.0 Workplace Shell development team.  He received a B.S.
+in computer science from Clarkson University, N.Y.
+
+

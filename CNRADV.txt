@@ -1,0 +1,328 @@
+Programming the OS/2 Container Control: By Example
+==================================================
+
+by Peter Haggar and Peter Brightbill
+OS/2 Developer Spring 1993, Vol. 5 No. 2, Pages 48-59
+
+The OS/2 container control was shipped with OS/2 2.0 as a 32-bit control
+and with the CUA Controls Library (CCL/2) as a 16-bit control; the two
+are functionally equivalent within their respective products, and the
+information in this article can be used by developers working with
+either product.  This article assumes the reader has some knowledge of
+the container control and how to program to it.  For more information on
+the container control, see the References section at the end of this article.
+
+
+Moving the Splitbar with the Keyboard
+=====================================
+
+While the container control allows users to move the splitbar (the
+vertical bar that separates two windows in the details view, shown in
+Figures 5 and 6 which appear at the end of this article) using a
+pointing device such as a mouse, many developers have asked how to do so
+using the keyboard.  Currently, the container only provides mouse
+manipulation of the splitbar.  Figure 1 (see FIGURE1.C in the file
+CNREXM.ZIP in the OS2DF2 forum, section "OS/2 Developer Mag".) shows how
+to add this feature to the container.  The CUA 1991 recommendation for
+initiating this function is to provide a Split entry in the system
+menu.
+
+
+Scrolling to a Particular Record
+================================
+
+With some applications, users may want to scroll a particular record
+into view.  For example, a user might want to scroll the cursored item
+to the top-left corner of the current viewport.  The application can do
+this with the container control's messages.  Important considerations
+include the position of the record relative to the current viewport and
+the size of that viewport.  The container control provides a number of
+useful query messages.  Figure 2 (see FIGURE2.C in the file CNREXM.ZIP
+in the OS2DF2 forum, section "OS/2 Developer Mag".) shows a function
+that uses some of these query functions to make this scrolling feature
+possible.  While this function will bring a record into view, it is not
+always possible to bring it to the top-left corner.
+
+
+Filtering Records
+=================
+
+The filter feature lets users see a subset of the objects in a
+container.  The code in Figure 3 (see FIGURE3.C in the file CNREXM.ZIP
+in the OS2DF2 forum, section "OS/2 Developer Mag".) deals with a
+container of vehicles; the vehicles can be either gas powered (Mazda
+Miata) or manually powered (Schwinn Bicycle).  The objects are displayed
+in details view and information about them is listed in the Year through
+Mileage fields in the VEHICLERECORD structure.  Because not all columns
+apply to all types of vehicles, some fields are empty.
+
+The code example allows a user to filter the container for either
+gas-powered or manual vehicles.  To accomplish this, it is necessary to
+create a filter function (pfnFilter, shown in Figure 4) (see FIGURE4.C
+in the file CNREXM.ZIP in the OS2DF2 forum, section "OS/2 Developer Mag".)
+that is called by the container once filtering is initiated with the
+CM_FILTER message.  The bGasPowered field of each VEHICLERECORD has been set
+to indicate the type of each vehicle.  The container control allows the
+application to pass a pointer as mp2 of the CM_FILTER message, which is then
+passed to the application's filter function as the second parameter.  In
+Figure 4 the FILTERSTRUCT structure is passed for this purpose.  This
+structure is set up differently depending on whether the user is filtering
+for gas-powered or manual vehicles.  Once the CM_FILTER message is sent to
+the container, the pfnFilter function is called once for each item in the
+container.  The pfnFilter function returns either TRUE (to make the item
+visible) or FALSE (to remove the item from the viewable subset).
+
+Once the records are filtered, it is desirable to show only those
+columns that apply to the given subset.  The MPG (miles per gallon)
+column, for example, is not applicable to manually powered vehicles.
+The container control provides the CFA_INVISIBLE column attribute for
+this purpose. The pUserData field of the FIELDINFO data structure has
+been set to indicate the type of column; 0 is for all vehicles, 1 for
+gas powered only, 2 for manual powered only. Iterate through all
+columns, turning the CFA_INVISIBLE attribute on or off depending on the
+desired subset.  Finally, update the changes by sending the
+CM_INVALIDATEDETAIL FIELDINFO message to the container.  Figure 5 shows
+the container before any filtering has been done.  Figure 6 shows the
+container after it has been filtered for manually powered vehicles.
+(Figure 5 and Figure 6 appear at the end of this article).
+
+
+Record Sharing
+==============
+
+The container's record sharing is probably one of its least understood
+features.  Record sharing is the ability of an application to allocate
+record memory once, then insert the same record into an unlimited number
+of container windows.  The position and attributes of each record are
+kept separately on a per-container basis.  For example, the same record
+can be inserted into multiple containers, with a different position and
+different attributes in each container.  In this situation, the
+application would allocate memory for only one record while the the
+container control manages data associated with that record across
+multiple containers.  The records, although identical and occupying the
+same area of memory, can appear totally independent to the user.  The
+record sharing feature, however, is available only to containers
+operating in the same process.
+
+Record sharing is useful to an application that must display one record
+in multiple container windows at the same time.  The OS/2 2.0 Workplace
+Shell, which uses the container control for all its folders, uses record
+sharing to implement CUA's Multiple Concurrent View concept.  For
+example, a user can open a command-prompts folder simultaneously in the
+Icon and Details views.  The objects in these folders, although
+appearing separately, are actually the same objects (i.e., the same
+container record inserted into multiple container windows).  But because
+the positions and attributes of each object are unique to its container,
+they can appear to the user to be separate objects.
+
+To take full advantage of record sharing in an application, the
+developer must code certain parts of the program carefully.
+Understanding how record sharing is implemented can help develop a
+well-behaved application.
+
+As each record is inserted into a container using CM_INSERTRECORD or a
+currently inserted record is invalidated using CM_INVALIDATERECORD, the
+container copies the attributes in the flRecordAttr field and the (x,y)
+position specified in the ptlIcon field to an internal storage area for
+that record.  As a record's attributes and position are changed, it is
+updated only in the internal storage area, not in the fields of the
+external record structure.  Therefore, when the same record is inserted
+into multiple containers, its positions and attributes can vary, as they
+are stored internally for each record on a per-container basis.  Figure 7
+(see FIGURE7.C in the file CNREXM.ZIP in the OS2DF2 forum, section
+"OS/2 Developer Mag".) shows the memory layout resulting from the same
+record being inserted into two different container windows.  The
+application has access only to the external record.  The container has
+access to the internal storage area for each record, as well as to the
+external record.
+
+When a record is returned to the application from the container, the
+ptlIcon and flRecordAttr information is retrieved from the records'
+internal storage area and updated in the external record to reflect the
+state of the record in that particular container.  For example, if the
+application uses the CM_QUERY RECORD message, the ptlIcon and
+flRecordAttr fields of the returned record will be updated to reflect
+the records' current state in the container from which it has been
+queried.  If the application wishes to query information for a record,
+the CM_QUERYRECORDINFO message is sent to the appropriate container.
+
+When writing an application, the most important aspect of record sharing
+is that CM_INVALIDATERECORD should almost always be preceded by
+CM_QUERYRECORDINFO for the records being invalidated.  Because
+CM_INVALIDATERECORD will copy the external record's current ptlIcon and
+flRecordAttr fields to the record's internal storage area, this
+information must be accurate.  It is not necessary to send the
+CM_QUERYRECORDINFO message if you are explicitly setting the ptlIcon
+position and flRecordAttr fields.  Figures 8 and 9 give code samples of
+record sharing.  (see FIGURE8.C and FIGURE9.C in the file CNREXM.ZIP
+in the OS2DF2 forum, section "OS/2 Developer Mag".)
+
+When using record sharing, it is important to note that when an
+application attempts to free the memory of a record (CM_FREERECORD or
+CM_REMOVERECORD with the CMA_FREE flag), it will be freed only if the
+record is not inserted into any other container.  For each version of
+the container with which record sharing is used, there are differences
+in behavior that affect application design.  One major difference
+between the 16- and 32-bit containers involves the memory area from
+which records are allocated.
+
+
+Record Sharing with the 16-Bit Container
+========================================
+
+With the 16 bit CCL/2 container, all records are allocated from a common
+storage space created when the container is created.  When a container
+is destroyed, so is the storage space for that container.  The
+destruction of the storage space and all the records within it occurs
+regardless of whether the records are inserted into another container.
+Avoid allocating records from one container (A), inserting the same
+records into another container, then destroying A before removing the
+records from the other container.  In this case, the records allocated
+from A would be freed, with unpredictable results for other containers
+holding the same records.
+
+It is important that records be freed only from the container from which
+they were allocated.  Freeing a record from another container can lead
+to memory corruption.  For example, a record is allocated from container
+A and then inserted into container B.  B frees the record with
+CM_FREERECORD.  This causes a memory error because the freed record was
+not part of B's storage space.  The container checks only if a record is
+not inserted into any other container before it allows it to be freed.
+
+These problems can be avoided by creating an invisible "source"
+container.  Each record should be allocated from, and inserted into,
+the source container so no other container can free it.  When the
+application is terminated, destroy the invisible source container last.
+(When a container is destroyed, it will also free the memory of all
+FIELDINFO structures inserted into it).
+
+
+Record Sharing with the 32-Bit Container
+========================================
+
+With the 32-bit OS/2 2.0 container, all records are allocated from the
+process address space, making them common across the process.  When a
+container is destroyed, all records inserted into that container not
+inserted into any other container are automatically freed.  Records can
+be allocated from one container and safely freed from another, since
+there is no concept of unique storage spaces for each individual
+container, as with the 16-bit container.  Because of the way the 32-bit
+container manages memory, there is no need here for the concept of a
+source container.
+
+
+Summary
+=======
+
+The container control provides developers with a variety of powerful
+functions.  The examples presented here should make using the container
+control much easier.
+
+
+References
+==========
+
+Haggar, Peter and Peter Brightbill. "Programming the OS/2 Container
+Control: The Basics," IBM OS/2 Developer. (Winter 1993): 96-101.
+
+Haggar, Peter, Tai Woo Nam, and Ruth Anne Taylor.  "Container Control:
+Implementing the Workplace Model," IBM Personal Systems Developer,
+(Winter 1992): 48-54.
+
+OS/2 2.0 Programmers Guide Volume II (IBM Doc. S10G-6494)
+
+OS/2 2.0 Presentation Manager Programming Reference Volume III (IBM
+Doc. S10G-6272)
+
+SAA CUA Guide to User Interface Design, (IBM Doc. SC34-4289)
+
+SAA CUA Advanced Interface Design Reference, (IBM Doc. SC34-4290)
+
+
+Peter Brightbill, IBM Programming Systems Laboratory, 11000 Regency
+Parkway, Cary, NC 27512.  Brightbill is a senior associate programmer in
+the IBM OS/2 PM Extensions department.  He joined IBM in 1989 and has been
+working on OS/2 PM development since that time.  He was a member of the
+container control development team and is currently working on C++ user
+interface class libraries.  Brightbill received a B.S. in mathematics and
+computer science from Millersville University, Pa.
+
+Peter Haggar, IBM Programming Systems Laboratory, 11000 Regency
+Parkway, Cary, NC 27512.  Haggar is a staff programmer in OS/2 PM
+Extensions development.  He joined IBM in 1987 and has been working in
+OS/2 PM development since 1989.  Haggar was a member of the OS/2
+container control development team and is currently working on C++ user
+interface class libraries.  He received a B.S. in computer science from
+Clarkson University, N.Y.
+
+
+ILLUSTRATIONS
+=============
+
+
+                                        Transportation
+-----------------------||-------------------------------------------------
+Year      Vehicle      ||   Price Color      Mileage  Miles per  Calories
+       Make and Model  ||                             Gallon     per Hour
+-----------------------||-------------------------------------------------
+1990  Mazda Miata      || 17,000  Red        25,000     31
+1981  Chevy Malibu     ||  1,095  Brown     135,500     22
+1988  Schwinn Special  ||    495  Silver                          245
+1988  Skateboard       ||     49  Black                           245
+1988  Honda Accord     || 14,000  Blue       50,000     34
+1985  Nissan 200SX     ||  2,100  Black     132,000     28
+1975  Radio Flyer Wagon||     45  Red                             100
+1979  Radio Flyer Wagon||     10  Red                             100
+1990  Fuji XL100       ||    575  Red/White                       100
+1991  Ford Explorer    || 22,050  Green      13,500     18
+1985  Nissan Sentra    ||  2,800  Gray       85,000     32
+                       ||
+<                     >||<                                             >
+
+Figure 5. Container before filtering
+
+
+
+                                        Transportation
+-----------------------||-------------------------------------------------
+Year      Vehicle      ||   Price Color      Calories
+       Make and Model  ||                    per Hour
+-----------------------||-------------------------------------------------
+1988  Schwinn Special  ||    495  Silver      245
+1988  Skateboard       ||     49  Black       245
+1975  Radio Flyer Wagon||     45  Red         100
+1979  Radio Flyer Wagon||     10  Red         100
+1990  Fuji XL100       ||    575  Red/White   100
+                       ||
+                       ||
+                       ||
+                       ||
+<                     >||<                                             >
+
+Figure 6. Container after filtering for manually powered vehicles
+
+
+
+   External RECORDCORE
+   R1 inserted into hwndCnr1
+   and hwndCnr2
+                           Internal storage       Internal storage
+   +---------------+ <-+   area for               area for
+   |      .        |   |   R1 in Cnr1             R1 in Cnr2
+   |      .        |   |  +--------------+   +-> +--------------+   +-> NULL
+   |      .        |   |  |   HwndCnr1   |   |   |   HwndCnr2   |   |
+   +---------------+   |  +--------------+   |   +--------------+   |
+   |  flRecordAttr |   |  |   ptlIcon    |   |   |   ptlIcon    |   |
+   +---------------+   |  +--------------+   |   +--------------+   |
+   |    ptlIcon    |   |  | flRecordAttr |   |   | flRecordAttr |   |
+   +---------------+   |  +--------------+   |   +--------------+   |
+   |      .        |   |  |   pNext      |---+   |   pNext      |---+
+   |      .        |   |  +--------------+       +--------------+
+   +---------------+   |  |  pExtRec     |       |  pExtRec     |
+                       |  +----+---------+       +----+---------+
+                       |       |                      |
+                       +-------+----------------------+
+
+Figure 7. External and internal record memory layout
+
+
