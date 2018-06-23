@@ -1,7 +1,7 @@
 DEV-SAMPLES-PM-Programming-the-OS-2-Container-Control
 =====================================================
 
-Programming the OS/2 Container Control articles source code. 
+Programming the OS/2 Container Control articles source code. Spring 1993 issue of the OS/2 Developer magazine.
 
 LICENSE
 ===============
